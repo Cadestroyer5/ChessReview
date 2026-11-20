@@ -7,7 +7,7 @@ uses HEAD /) and hides .git, deploy/ and other dotfiles.
 It also keeps every game the page loads, and every engine review, on the server so they
 survive a cleared browser and show up on any device:
   GET  api/user/<name>            -> {"games": [...], "months": [...], "analysis": {...}}
-  POST api/user/<name>/games      {"games": [chess.com game objects], "months": [archive urls]}
+  POST api/user/<name>/games      {"games": [chess.com game objects or PGN imports], "months": [archive urls]}
   POST api/user/<name>/analysis   {"key": "<game url>|<depth>", "evals": [...]}
 Data lives in one JSON file per player under --data (default $STATE_DIRECTORY or ./data).
 """
@@ -140,7 +140,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 added = 0
                 for g in games:
                     url = isinstance(g, dict) and g.get("url")
-                    if not isinstance(url, str) or not url.startswith("https://www.chess.com/"):
+                    if not isinstance(url, str) or len(url) > 300 or not (url.startswith("https://www.chess.com/") or url.startswith("import:")):
                         continue
                     if url not in d["games"]:
                         added += 1

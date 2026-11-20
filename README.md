@@ -13,6 +13,8 @@ You can link straight to a user with `index.html?u=yourname`.
 
 Every move gets an explanation: the tactics it found (forks, pins, skewers, discovered attacks and checks, double checks, batteries, free pieces, removing the defender, back-rank and smothered mates), the ones it missed, the ones it allowed, and the engine's line. The spotter is `lib/tactics.js`.
 
+Games against bots aren't in chess.com's public API. Bring them in with **Import PGN** (bottom of the game list): on chess.com open Profile → Games, select the games, press Download, and drop the .pgn file in. Imported games are listed under "vs Bot" (or their time control) and are left out of the rating maths.
+
 When served by `deploy/serve.py` (as on Mewtwo), every game the page loads and every review is saved on the server, so they're there next time on any device, even if chess.com is unreachable. Opened straight from disk, reviews are only cached in the browser.
 Depth 12 takes roughly 20–60 seconds per game; raise it for more accurate reviews.
 

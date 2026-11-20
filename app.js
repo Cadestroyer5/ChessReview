@@ -3,10 +3,10 @@
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const DRAW_CODES = new Set(['agreed', 'repetition', 'stalemate', 'insufficient', '50move', 'timevsinsufficient']);
-const TC_ORDER = ['rapid', 'blitz', 'bullet', 'daily'];
-const TC_COLOR = { rapid: 'var(--s1)', blitz: 'var(--s2)', bullet: 'var(--s3)', daily: 'var(--s4)' };
+const TC_ORDER = ['rapid', 'blitz', 'bullet', 'daily', 'bot'];
+const TC_COLOR = { rapid: 'var(--s1)', blitz: 'var(--s2)', bullet: 'var(--s3)', daily: 'var(--s4)', bot: 'var(--muted)' };
 const TACTIC_MIN = 25; // motif weight that counts as a real tactic (not just a check or a threat)
-const TC_LABEL = { rapid: 'Rapid', blitz: 'Blitz', bullet: 'Bullet', daily: 'Daily' };
+const TC_LABEL = { rapid: 'Rapid', blitz: 'Blitz', bullet: 'Bullet', daily: 'Daily', bot: 'vs Bot' };
 const CLS = {
   best:       { label: 'Best',       sym: '★', desc: 'the engine’s top choice' },
   excellent:  { label: 'Excellent',  sym: '!', desc: 'almost as good as the best move' },
@@ -106,11 +106,85 @@ function saveAnalysis(key, packed) {
   saveQueue = saveQueue.then(async () => { if (user === S.user) { const r = await api('/analysis', { key, evals: packed }); if (r) { S.saved.reviews = r.reviews; renderSavedNote(); } } });
 }
 
+/* ---------------- PGN import (bot games and anything else chess.com's API leaves out) ---------------- */
+const TERMINATION = [[/checkmate/i, 'checkmated'], [/resign/i, 'resigned'], [/time/i, 'timeout'], [/abandon/i, 'abandoned'],
+  [/stalemate/i, 'stalemate'], [/repetition/i, 'repetition'], [/insufficient/i, 'insufficient'], [/50|fifty/i, '50move'], [/agree/i, 'agreed']];
+function hashStr(t) { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
+// Split a multi-game PGN: a header line that follows movetext starts the next game.
+function splitPgn(text) {
+  const games = [];
+  let cur = [], inMoves = false;
+  text.replace(/\r/g, '').split('\n').forEach((line) => {
+    const t = line.trim();
+    if (!t) return cur.push(line);
+    const header = t.startsWith('[');
+    if (header && inMoves) { games.push(cur.join('\n')); cur = []; inMoves = false; }
+    if (!header) inMoves = true;
+    cur.push(line);
+  });
+  if (cur.join('').trim()) games.push(cur.join('\n'));
+  return games.map((x) => x.trim()).filter(Boolean);
+}
+function timeClassOf(h) {
+  const link = h.Link || h.Site || '';
+  const elo = (v) => /^\d+$/.test(v || '');
+  if (/\/computer\//i.test(link) || /computer|vs\.? ?bot/i.test(h.Event || '') || !elo(h.WhiteElo) || !elo(h.BlackElo)) return 'bot';
+  const tc = h.TimeControl || '';
+  if (tc.includes('/')) return 'daily';
+  const m = tc.match(/^(\d+)(?:\+(\d+))?/);
+  if (!m) return 'rapid';
+  const est = +m[1] + 40 * (+m[2] || 0);
+  return est < 180 ? 'bullet' : est < 600 ? 'blitz' : est < 86400 ? 'rapid' : 'daily';
+}
+function pgnToRaw(pgn) {
+  const c = new Chess();
+  if (!c.load_pgn(pgn, { sloppy: true })) return { error: 'unreadable' };
+  const h = c.header() || {};
+  if (!h.White || !h.Black) return { error: 'unreadable' };
+  if (![h.White, h.Black].some((n) => n.toLowerCase() === S.user)) return { error: 'not-you' };
+  const date = (h.UTCDate || h.EndDate || h.Date || '').replace(/\./g, '-');
+  const time = h.UTCTime || h.EndTime || '12:00:00';
+  let end = Date.parse(date + 'T' + time + (h.UTCDate ? 'Z' : ''));
+  if (isNaN(end)) end = Date.now();
+  const res = h.Result || '*';
+  const why = (TERMINATION.find(([re]) => re.test(h.Termination || '')) || [null, res === '1/2-1/2' ? 'agreed' : 'resigned'])[1];
+  const side = (won, lost) => (res === '1-0' ? won : res === '0-1' ? lost : why === 'checkmated' || why === 'resigned' || why === 'timeout' ? 'agreed' : why);
+  const link = (h.Link || '').startsWith('https://www.chess.com/') ? h.Link : null;
+  const elo = (v) => (/^\d+$/.test(v || '') ? +v : '?');
+  return {
+    game: {
+      url: link || 'import:' + hashStr(c.pgn() + '|' + date + '|' + h.White + '|' + h.Black),
+      pgn, end_time: Math.floor(end / 1000), time_class: timeClassOf(h), rated: false, rules: 'chess', imported: true,
+      white: { username: h.White, rating: elo(h.WhiteElo), result: side('win', why) },
+      black: { username: h.Black, rating: elo(h.BlackElo), result: side(why, 'win') },
+    },
+  };
+}
+// chess.com games come back unrated and win/draw codes match its API, so the rest of the app treats them like any other game.
+function importPgnText(text) {
+  const chunks = splitPgn(text);
+  const raws = [], skipped = { unreadable: 0, 'not-you': 0, dupe: 0 };
+  const have = new Set(S.games.map((g) => g.url));
+  chunks.forEach((ch) => {
+    const r = pgnToRaw(ch);
+    if (r.error) { skipped[r.error]++; return; }
+    if (have.has(r.game.url)) { skipped.dupe++; return; }
+    have.add(r.game.url);
+    raws.push(r.game);
+  });
+  const got = raws.map(normGame).filter(Boolean);
+  S.games.push(...got);
+  S.games.sort((a, b) => b.end - a.end);
+  saveGames(raws, null);
+  return { added: got.length, total: chunks.length, skipped };
+}
+
 function normGame(g) {
   if (!g.pgn || (g.rules && g.rules !== 'chess')) return null;
   const meWhite = g.white.username.toLowerCase() === S.user;
   const me = meWhite ? g.white : g.black, opp = meWhite ? g.black : g.white;
   const res = me.result === 'win' ? 'W' : DRAW_CODES.has(me.result) ? 'D' : 'L';
+  if (g.imported && !g.time_class) g.time_class = 'rapid';
   return {
     url: g.url, pgn: g.pgn, end: g.end_time, tc: g.time_class, rated: g.rated !== false,
     color: meWhite ? 'w' : 'b', res, raw: g,
@@ -161,8 +235,9 @@ async function loadUser(name) {
     await loadOlderMonth(false);
   }
   if (!S.games.length) {
-    setStatus('No standard chess games found in the last few months for ' + esc(name) + '.', true);
+    setStatus('No standard chess games found in the last few months for ' + esc(name) + '. Games against bots can be added with <b>Import PGN</b> at the bottom left.', true);
     renderRatings();
+    renderSavedNote();
     return;
   }
   hideStatus();
@@ -208,7 +283,7 @@ async function loadWholeHistory() {
 
 function pickDefaultTc() {
   const counts = {};
-  S.games.slice(0, 30).forEach((g) => (counts[g.tc] = (counts[g.tc] || 0) + 1));
+  S.games.filter((g) => g.rated).slice(0, 30).forEach((g) => (counts[g.tc] = (counts[g.tc] || 0) + 1));
   S.tc = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'rapid';
 }
 
@@ -477,7 +552,7 @@ function renderRatings() {
 
 function renderSavedNote() {
   const el = $('savedNote');
-  if (!S.games.length) return;
+  if (!S.user) return;
   $('gfoot').classList.remove('hidden');
   const left = S.archiveIdx > 0 ? S.archives.slice(0, S.archiveIdx).filter((u) => !S.saved.months.has(u)).length : 0;
   $('loadOlder').disabled = left === 0;
@@ -489,7 +564,8 @@ function renderSavedNote() {
 
 function renderRecent() {
   if (!S.games.length || S.view !== 'overview') return;
-  const tcs = tcsPresent();
+  const tcs = tcsPresent().filter((tc) => S.games.some((g) => g.tc === tc && g.rated));
+  if (!tcs.length) { $('tcTabs').innerHTML = ''; $('recentTiles').innerHTML = '<div class="muted">No rated games loaded yet.</div>'; $('recentTable').innerHTML = ''; $('analyzeRecent').disabled = true; return; }
   if (!tcs.includes(S.tc)) S.tc = tcs[0];
   $('tcTabs').innerHTML = tcs.map((tc) => `<button data-tc="${tc}" class="${tc === S.tc ? 'on' : ''}">${TC_LABEL[tc]}</button>`).join('');
   const pr = projection(S.tc);
@@ -712,7 +788,7 @@ function renderReview() {
   $('reviewHead').innerHTML = `<span class="res ${g.res}">${g.res}</span>
     <span class="vs">${esc(g.me.name)} <span class="muted" style="font-weight:400">vs</span> ${esc(g.opp.name)} <span class="muted" style="font-weight:400">(${g.opp.rating})</span></span>
     <span class="sub">${TC_LABEL[g.tc] || esc(g.tc)} · ${fmtDateLong(g.end)}${resultWord(g) ? ' · by ' + esc(resultWord(g)) : ''} · ${a ? 'engine depth ' + a.depth : 'reviewing…'}</span>
-    <span class="spacer"></span><a href="${esc(g.url)}" target="_blank" rel="noopener" class="small">Open on chess.com ↗</a>`;
+    <span class="spacer"></span>${g.url.startsWith('https://') ? `<a href="${esc(g.url)}" target="_blank" rel="noopener" class="small">Open on chess.com ↗</a>` : '<span class="small muted">Imported from PGN</span>'}`;
   const pl = (p, c) => `<span><span class="dot ${c}"></span> <b>${esc(p.username)}</b> <span class="muted">(${p.rating})</span></span>` +
     (a && a[c].accuracy != null ? `<span class="muted">${a[c].accuracy.toFixed(1)}% accuracy</span>` : '<span></span>');
   $('topPlayer').innerHTML = S.flip ? pl(g.white, 'w') : pl(g.black, 'b');
@@ -1041,6 +1117,33 @@ $('lookup').addEventListener('submit', (e) => { e.preventDefault(); const v = $(
 $('loadOlder').addEventListener('click', () => loadOlderMonth(true));
 $('gameFilter').addEventListener('change', renderGamesTable);
 $('loadAll').addEventListener('click', loadWholeHistory);
+$('importBtn').addEventListener('click', () => { $('importMsg').textContent = ''; $('importMsg').className = 'small'; $('importDlg').showModal(); });
+async function runImport(texts) {
+  const msg = $('importMsg');
+  if (!S.user) { msg.textContent = 'Load your username first, so I know which side you played.'; msg.className = 'small err'; return; }
+  let added = 0, total = 0;
+  const sk = { unreadable: 0, 'not-you': 0, dupe: 0 };
+  texts.forEach((t) => { const r = importPgnText(t); added += r.added; total += r.total; Object.keys(sk).forEach((k) => (sk[k] += r.skipped[k])); });
+  const notes = [];
+  if (sk.dupe) notes.push(sk.dupe + ' already here');
+  if (sk['not-you']) notes.push(sk['not-you'] + ' not played by ' + S.user);
+  if (sk.unreadable) notes.push(sk.unreadable + ' unreadable');
+  msg.textContent = total ? `Imported ${added} of ${total} game${total === 1 ? '' : 's'}${notes.length ? ' (' + notes.join(', ') + ')' : ''}.${added && S.server ? ' Saved on the server.' : ''}` : 'No games found in that PGN.';
+  msg.className = 'small ' + (added ? 'ok' : 'err');
+  if (added) { if (!S.tc) pickDefaultTc(); $('welcome').classList.add('hidden'); hideStatus(); renderAll(); }
+}
+$('importGo').addEventListener('click', async () => {
+  const files = [...$('importFile').files];
+  const texts = await Promise.all(files.map((f) => f.text()));
+  if ($('importText').value.trim()) texts.push($('importText').value);
+  if (!texts.length) { $('importMsg').textContent = 'Pick a .pgn file or paste PGN text first.'; $('importMsg').className = 'small err'; return; }
+  await runImport(texts);
+  $('importFile').value = ''; $('importText').value = '';
+});
+const drop = $('importDrop');
+['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove('over')));
+drop.addEventListener('drop', async (e) => { e.preventDefault(); await runImport(await Promise.all([...e.dataTransfer.files].map((f) => f.text()))); });
 $('viewTabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-view]'); if (b && !b.disabled) setView(b.dataset.view); });
 $('analyzeRecent').addEventListener('click', analyzeRecent);
 $('depth').addEventListener('change', () => { store.set('grd:depth', $('depth').value); renderAll(); if (S.current && !cachedAnalysis(S.current)) openReview(S.current); });

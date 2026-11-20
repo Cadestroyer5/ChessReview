@@ -142,6 +142,17 @@ details.method p { margin: 6px 0; }
 .progress div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
 .info { display: inline-flex; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--axis); font-size: 10px; align-items: center; justify-content: center; color: var(--ink-2); cursor: help; vertical-align: 1px; font-weight: 600; }
 
+/* ---- import dialog ---- */
+dialog#importDlg { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--ink); padding: 0; width: min(560px, calc(100vw - 32px)); }
+dialog#importDlg::backdrop { background: rgba(0,0,0,.45); }
+.imp { padding: 16px 18px; display: grid; gap: 10px; }
+.imp h2 { font-size: 16px; margin: 0; }
+.imp p { margin: 0; color: var(--ink-2); }
+.imp textarea { width: 100%; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--page); color: var(--ink); border: 1px solid var(--axis); border-radius: 8px; padding: 8px; resize: vertical; }
+.drop { border: 2px dashed var(--axis); border-radius: 10px; padding: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+#importMsg.err { color: var(--critical); } #importMsg.ok { color: var(--good-ink); }
+
 /* ---- review ---- */
 .rhead { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .rhead .vs { font-size: 16px; font-weight: 650; }
@@ -240,6 +251,7 @@ details.method p { margin: 6px 0; }
         <button id="loadOlder" title="Fetch the next older month of games">Older month</button>
         <button id="loadAll" title="Fetch every month back to your first game">Whole history</button>
       </div>
+      <button id="importBtn" title="Add games chess.com doesn't share publicly, like games against bots">Import PGN (bot games)…</button>
       <div class="progress hidden" id="historyProgress"><div></div></div>
       <div class="saved" id="savedNote"></div>
     </div>
@@ -318,6 +330,23 @@ details.method p { margin: 6px 0; }
     </section>
   </main>
 </div>
+
+<dialog id="importDlg">
+  <form method="dialog" class="imp">
+    <h2>Import games from a PGN file</h2>
+    <p class="small">chess.com leaves games against bots (and some others) out of the data it shares, so they have to come in as a file. On chess.com: <b>Profile → Games</b> (the game archive), filter to <b>vs Computer</b> if you like, tick the games (or the select-all box), then <b>Download</b>. Drop the .pgn here or pick it below. Pasting PGN text works too.</p>
+    <div class="drop" id="importDrop">
+      <input type="file" id="importFile" accept=".pgn,text/plain" multiple>
+      <span class="small muted">or drop .pgn files here</span>
+    </div>
+    <textarea id="importText" rows="7" placeholder="…or paste PGN text here" spellcheck="false"></textarea>
+    <div class="small" id="importMsg"></div>
+    <div class="row" style="justify-content:flex-end">
+      <button value="cancel" formnovalidate>Close</button>
+      <button class="primary" id="importGo" type="button">Import</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="lib/chess.js"></script>
 <script src="lib/stockfish-src.js"></script>
