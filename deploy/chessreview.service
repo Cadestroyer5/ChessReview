@@ -1,0 +1,18 @@
+[Unit]
+Description=Game Review Desk (chess review dashboard) on 127.0.0.1:8775
+After=network.target
+
+[Service]
+User=chessreview
+Group=chessreview
+ExecStart=/usr/bin/python3 /srv/chessreview/deploy/serve.py --root /srv/chessreview
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+
+[Install]
+WantedBy=multi-user.target
