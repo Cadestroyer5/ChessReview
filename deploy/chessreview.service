@@ -5,7 +5,9 @@ After=network.target
 [Service]
 User=chessreview
 Group=chessreview
-ExecStart=/usr/bin/python3 /srv/chessreview/deploy/serve.py --root /srv/chessreview
+ExecStart=/usr/bin/python3 /srv/chessreview/deploy/serve.py --root /srv/chessreview --data /var/lib/chessreview
+# Saved games and reviews: /var/lib/chessreview/users/<player>.json
+StateDirectory=chessreview
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
