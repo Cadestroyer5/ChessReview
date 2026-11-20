@@ -48,6 +48,7 @@ class Store:
         return d
 
     def save(self, name, d):
+        os.makedirs(os.path.join(self.root, "users"), exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=os.path.join(self.root, "users"), prefix=".tmp-")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(d, f, separators=(",", ":"))

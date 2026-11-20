@@ -222,6 +222,7 @@ async function loadUser(name) {
   } catch (e) {
     if (S.games.length) { setStatus(esc(e.message === 'not-found' ? 'chess.com doesn’t know this player any more.' : e.message) + ' Showing your saved games.', true); renderAll(); return; }
     setStatus(e.message === 'not-found' ? 'No chess.com player called “' + esc(name) + '”. Check the spelling.' : esc(e.message), true);
+    renderSavedNote(); // Import PGN still works
     return;
   }
   store.set('grd:lastUser', name.trim());
