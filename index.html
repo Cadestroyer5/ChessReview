@@ -41,200 +41,287 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-header.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5; }
-header.top h1 { font-size: 18px; margin: 0; letter-spacing: .01em; }
-header.top h1 span { color: var(--muted); font-weight: 400; }
-form.lookup { display: flex; gap: 8px; flex-wrap: wrap; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 input, select, button { font: inherit; color: var(--ink); }
-input[type=text], select { background: var(--page); border: 1px solid var(--axis); border-radius: 8px; padding: 7px 10px; }
-input[type=text] { width: 200px; }
-button { background: var(--surface-2); border: 1px solid var(--axis); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+input[type=text], select { background: var(--page); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 10px; }
+button { background: var(--surface-2); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 11px; cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.ghost { background: transparent; border-color: transparent; min-width: 36px; font-size: 16px; padding: 4px 8px; }
 button:disabled { opacity: .5; cursor: default; }
-main { max-width: 1280px; margin: 0 auto; padding: 20px 24px 60px; display: grid; gap: 20px; }
-.card { scroll-margin-top: 84px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; min-width: 0; }
-.card h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.card h2 .sub { font-weight: 400; color: var(--muted); font-size: 13px; }
-.muted { color: var(--muted); }
-.small { font-size: 13px; }
-.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.spacer { flex: 1; }
-.status { padding: 10px 14px; border-radius: 8px; background: var(--surface-2); color: var(--ink-2); }
-.status.err { border-left: 4px solid var(--critical); }
+a { color: var(--accent); }
+.muted { color: var(--muted); } .small { font-size: 12.5px; } .spacer { flex: 1; }
 .hidden { display: none !important; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.tile { background: var(--surface-2); border-radius: 10px; padding: 12px 14px; }
-.tile .label { font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
-.tile .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; }
-.tile .foot { font-size: 12px; color: var(--muted); }
+/* ---- shell ---- */
+header.top { display: flex; gap: 12px; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5; height: 56px; }
+header.top h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+form.lookup { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+form.lookup input { width: 190px; }
+.app { display: grid; grid-template-columns: 330px minmax(0, 1fr); height: calc(100vh - 56px); }
+aside.side { border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+main.pane { overflow-y: auto; padding: 16px 20px 40px; min-width: 0; }
+@media (max-width: 980px) {
+  .app { grid-template-columns: 1fr; height: auto; }
+  aside.side { border-right: none; border-bottom: 1px solid var(--border); }
+  .glist { max-height: 46vh; }
+  main.pane { overflow: visible; }
+}
+@media (max-width: 600px) {
+  header.top { padding: 8px 16px; height: auto; flex-wrap: wrap; position: static; }
+  form.lookup { margin-left: 0; width: 100%; } form.lookup input { flex: 1; width: auto; min-width: 0; }
+  main.pane { padding: 12px 16px 40px; }
+}
+
+/* ---- sidebar ---- */
+.profile { padding: 14px 16px 12px; border-bottom: 1px solid var(--border); }
+.profile .name { font-weight: 650; font-size: 15px; display: flex; gap: 8px; align-items: baseline; }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 6px; margin-top: 10px; }
+.chip { background: var(--surface-2); border-radius: 8px; padding: 5px 8px; border-top: 3px solid var(--c, var(--axis)); }
+.chip .l { font-size: 11px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+.chip .v { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.chips > .small { grid-column: 1 / -1; }
+.chip .f { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.gtools { display: flex; gap: 8px; padding: 10px 16px; align-items: center; border-bottom: 1px solid var(--border); }
+.gtools select { flex: 1; min-width: 0; }
+.glist { flex: 1; overflow-y: auto; min-height: 0; }
+.grow { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; text-align: left; border: none; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 8px 16px; }
+.grow:hover:not(:disabled) { background: var(--surface-2); }
+.grow.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.grow .opp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; }
+.grow .meta { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grow .acc { font-size: 12.5px; font-variant-numeric: tabular-nums; text-align: right; }
+.grow .acc .sub { display: block; font-size: 10.5px; color: var(--muted); }
+.gfoot { padding: 10px 16px; border-top: 1px solid var(--border); display: grid; gap: 8px; }
+.gfoot .row button { flex: 1; }
+.saved { font-size: 12px; color: var(--muted); }
+.saved b { color: var(--good-ink); font-weight: 600; }
+.empty { padding: 24px 16px; color: var(--muted); }
+
+/* ---- main ---- */
+.status { padding: 10px 14px; border-radius: 8px; background: var(--surface-2); color: var(--ink-2); margin-bottom: 14px; }
+.status.err { border-left: 4px solid var(--critical); }
+.welcome { max-width: 560px; margin: 8vh auto; text-align: center; color: var(--ink-2); }
+.welcome h2 { color: var(--ink); font-size: 22px; margin: 0 0 8px; }
+.viewtabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.viewtabs button { border: none; border-radius: 0; background: transparent; padding: 8px 12px; color: var(--ink-2); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.viewtabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.card h2 { font-size: 14px; margin: 0 0 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.card h2 .sub { font-weight: 400; color: var(--muted); font-size: 12.5px; }
+.ovgrid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1750px) { .ovgrid { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: start; } }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.tile { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; }
+.tile .label { font-size: 11px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+.tile .value { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.tile .foot { font-size: 11.5px; color: var(--muted); }
+.tile.key { box-shadow: inset 3px 0 0 var(--accent); }
 .delta-up { color: var(--good-ink); } .delta-down { color: var(--critical); }
-
 .tabs { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 3px; gap: 2px; }
-.tabs button { border: none; background: transparent; padding: 4px 10px; border-radius: 6px; font-size: 13px; }
+.tabs button { border: none; background: transparent; padding: 3px 10px; border-radius: 6px; font-size: 12.5px; }
 .tabs button.on { background: var(--surface); box-shadow: 0 0 0 1px var(--border); }
 
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-th { font-size: 12px; color: var(--ink-2); font-weight: 600; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { font-size: 11.5px; color: var(--ink-2); font-weight: 600; }
 tr.sel td { background: var(--surface-2); }
+tbody tr { cursor: pointer; } tbody tr:hover td { background: var(--surface-2); }
 .scroll-x { overflow-x: auto; }
-.res { display: inline-block; min-width: 22px; text-align: center; border-radius: 5px; padding: 0 5px; font-weight: 650; font-size: 13px; }
+.res { display: inline-block; min-width: 22px; text-align: center; border-radius: 5px; padding: 0 5px; font-weight: 650; font-size: 12.5px; }
 .res.W { background: var(--good); color: #fff; } .res.L { background: var(--critical); color: #fff; } .res.D { background: var(--axis); color: var(--ink); }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--muted); vertical-align: -1px; }
 .dot.w { background: #fff; } .dot.b { background: #222; }
+details.method { font-size: 13px; color: var(--ink-2); margin-top: 10px; }
+details.method summary { cursor: pointer; color: var(--ink); }
+details.method p { margin: 6px 0; }
+.progress { height: 5px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.progress div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+.info { display: inline-flex; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--axis); font-size: 10px; align-items: center; justify-content: center; color: var(--ink-2); cursor: help; vertical-align: 1px; font-weight: 600; }
 
-.method { font-size: 13px; color: var(--ink-2); }
-.method summary { cursor: pointer; color: var(--ink); }
-
-/* review */
-.review { display: grid; grid-template-columns: minmax(280px, 520px) minmax(0, 1fr); gap: 20px; }
-@media (max-width: 900px) { .review { grid-template-columns: 1fr; } }
-.board-wrap { display: grid; grid-template-columns: 18px 1fr; gap: 6px; }
+/* ---- review ---- */
+.rhead { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.rhead .vs { font-size: 16px; font-weight: 650; }
+.rhead .sub { color: var(--muted); font-size: 12.5px; }
+.review { display: grid; grid-template-columns: minmax(280px, min(560px, calc(100vh - 250px))) minmax(320px, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 1150px) { .review { grid-template-columns: 1fr; } .review > .boardcol { max-width: 560px; width: 100%; margin: 0 auto; } }
+.board-wrap { display: grid; grid-template-columns: 16px 1fr; gap: 6px; }
 .evalbar { position: relative; border-radius: 4px; overflow: hidden; background: var(--wp-black); border: 1px solid var(--axis); }
 .evalbar .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--wp-white); transition: height .25s; }
 .evalbar.flip .fill { top: 0; bottom: auto; }
-.board { position: relative; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); aspect-ratio: 1; border-radius: 6px; overflow: hidden; user-select: none; }
+.board { position: relative; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); aspect-ratio: 1; border-radius: 6px; overflow: hidden; user-select: none; container-type: inline-size; }
 .sq { position: relative; display: flex; align-items: center; justify-content: center; }
 .sq.l { background: var(--sq-light); } .sq.d { background: var(--sq-dark); }
 .sq.hl::after { content: ""; position: absolute; inset: 0; background: var(--sq-hl); }
-.pc { position: relative; z-index: 1; font-size: min(7.2vw, 50px); line-height: 1; font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", serif; }
+.pc { position: relative; z-index: 1; font-size: 10cqi; line-height: 1; font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", serif; }
 .pc.w { color: #fff; text-shadow: 0 0 1px #000, 0 0 1px #000, 0 0 2px #000, 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000; }
 .pc.b { color: #151515; text-shadow: 0 0 1px #fff4; }
 .coord { position: absolute; font-size: 10px; font-weight: 600; opacity: .75; z-index: 1; }
-.coord.f { right: 3px; bottom: 1px; } .coord.r { left: 3px; top: 1px; }
+.coord.f { left: 3px; bottom: 1px; } .coord.r { right: 3px; top: 1px; }
 .sq.l .coord { color: var(--sq-dark); } .sq.d .coord { color: var(--sq-light); }
 .board svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
 .mark { position: absolute; top: 2px; right: 2px; z-index: 3; width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; color: #fff; box-shadow: 0 0 0 2px var(--surface); }
-.navbar { display: flex; gap: 6px; justify-content: center; margin-top: 10px; }
-.navbar button { min-width: 44px; }
-.players { display: flex; justify-content: space-between; font-size: 14px; margin: 6px 0 6px 24px; gap: 8px; }
+.players { display: flex; justify-content: space-between; font-size: 13.5px; margin: 5px 0 5px 22px; gap: 8px; }
 .players b { font-weight: 650; }
+.navbar { display: flex; gap: 6px; justify-content: center; margin-top: 8px; }
+.navbar button { min-width: 44px; }
 
-.comment { margin-top: 12px; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; min-height: 64px; font-size: 14px; }
-.comment .cls { font-weight: 700; }
+.panel { display: grid; gap: 12px; min-width: 0; }
+.comment { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--c, var(--accent)); border-radius: 10px; padding: 10px 14px; min-height: 92px; font-size: 13.5px; }
+.comment .ttl { font-size: 15px; margin-bottom: 4px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.comment .why { margin: 6px 0 2px; padding: 0; list-style: none; }
+.comment .why li { margin: 3px 0; padding-left: 20px; text-indent: -20px; }
+.comment .why i { font-style: normal; display: inline-block; width: 20px; text-indent: 0; font-weight: 700; }
+.comment .why i.f { color: var(--good-ink); } .comment .why i.m { color: var(--critical); } .comment .why i.a { color: var(--serious); } .comment .why i.n { color: var(--muted); }
+.comment .line { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--ink-2); }
+.comment .evals { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
 
 .cls-best { --c: #0ca30c; } .cls-excellent { --c: #1baf7a; } .cls-good { --c: #898781; }
 .cls-inaccuracy { --c: #eda100; } .cls-mistake { --c: #ec835a; } .cls-blunder { --c: #d03b3b; } .cls-forced { --c: #6f6e69; }
 .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; font-size: 11px; font-weight: 800; color: #fff; background: var(--c); }
 .cls-inaccuracy .badge, .badge.cls-inaccuracy { color: #0b0b0b; }
 
-.summary { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 16px; font-size: 14px; align-items: center; font-variant-numeric: tabular-nums; }
-.summary .h { font-size: 12px; color: var(--ink-2); font-weight: 600; }
-.summary .acc { font-size: 26px; font-weight: 700; }
+.split { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+.summary { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 12px; font-size: 13px; align-items: center; font-variant-numeric: tabular-nums; }
+.summary .h { font-size: 11.5px; color: var(--ink-2); font-weight: 600; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary > div { white-space: nowrap; }
+.summary .acc { font-size: 22px; font-weight: 700; }
 .summary .num { text-align: center; }
-
-.moves { display: grid; grid-template-columns: 40px 1fr 1fr; max-height: 360px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; font-variant-numeric: tabular-nums; }
-.moves .n { color: var(--muted); padding: 4px 8px; background: var(--surface-2); font-size: 13px; }
+.summary .rule { grid-column: 1 / -1; border-top: 1px solid var(--border); margin: 4px 0; }
+.moves { display: grid; grid-template-columns: 36px 1fr 1fr; max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; font-variant-numeric: tabular-nums; align-content: start; }
+.moves .n { color: var(--muted); padding: 3px 8px; background: var(--surface-2); font-size: 12.5px; }
 .moves .m { padding: 3px 8px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 6px; border-left: 1px solid var(--border); }
 .moves .m:hover { background: var(--surface-2); }
 .moves .m.cur { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .moves .m .ev { font-size: 11px; color: var(--muted); }
+.keymom { display: grid; gap: 5px; font-size: 12.5px; }
+.keymom button { text-align: left; padding: 5px 9px; }
 
 .chart { position: relative; }
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
 .tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.15); white-space: nowrap; z-index: 4; }
-.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-top: 6px; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-2); margin-top: 4px; }
 .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
-.progress { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
-.progress div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
-.keymom { display: grid; gap: 6px; font-size: 13px; }
-.keymom button { text-align: left; padding: 5px 9px; }
-@media (max-width: 600px) { header.top, main { padding-left: 16px; padding-right: 16px; } input[type=text] { width: 140px; } }
 </style>
 </head>
 <body>
 <header class="top">
-  <h1>Game Review Desk <span>· chess.com + Stockfish</span></h1>
+  <h1>Game Review Desk</h1>
   <form class="lookup" id="lookup">
     <input type="text" id="username" placeholder="chess.com username" autocomplete="off" spellcheck="false" required>
-    <button class="primary" type="submit">Load games</button>
+    <button class="primary" type="submit">Load</button>
     <select id="depth" title="Engine depth: higher is more accurate but slower">
-      <option value="10">Depth 10 (fast)</option>
+      <option value="10">Depth 10 · fast</option>
       <option value="12" selected>Depth 12</option>
       <option value="14">Depth 14</option>
-      <option value="16">Depth 16 (slow)</option>
+      <option value="16">Depth 16 · slow</option>
     </select>
-    <button type="button" id="themeBtn" title="Toggle light / dark">◐</button>
+    <button type="button" id="themeBtn" class="ghost" title="Toggle light / dark" aria-label="Toggle light / dark"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg></button>
   </form>
 </header>
 
-<main>
-  <div id="status" class="status">Enter your chess.com username to load your profile and recent games. Everything runs in your browser: games come from chess.com's public API and Stockfish analyses them locally.</div>
-
-  <section class="card hidden" id="ratingsCard">
-    <h2 id="profileTitle">Ratings</h2>
-    <div class="tiles" id="ratingTiles"></div>
-  </section>
-
-  <section class="card hidden" id="recentCard">
-    <h2>Last 5 games <span class="tabs" id="tcTabs"></span><span class="spacer"></span>
-      <button id="analyzeRecent" class="primary">Analyze these 5</button></h2>
-    <div class="tiles" id="recentTiles"></div>
-    <div class="progress hidden" id="batchProgress" style="margin-top:12px"><div></div></div>
-    <div class="scroll-x" style="margin-top:12px"><table id="recentTable"></table></div>
-    <details class="method" style="margin-top:12px">
-      <summary>How the projected rating is worked out</summary>
-      <p><b>Performance rating</b> is the classic results-based figure: the average rating of your last 5 opponents, plus 400 × (wins − losses) ÷ games. Win them all and it's opponents' average + 400; lose them all and it's average − 400.</p>
-      <p><b>Accuracy-based rating</b> only uses the games Stockfish has reviewed. For each game it compares your average centipawn loss (ACPL, how much evaluation you gave away per move) with your opponent's. Using the rough rule that rating scales with e<sup>−ACPL/100</sup>, a game where you lost 20 fewer centipawns per move than a 1000-rated opponent reads as about 1000 × e<sup>0.2</sup> ≈ 1220. The opponent's rating anchors the scale, so it calibrates itself to your rating pool. Each game's ratio is capped at ×0.67–×1.5 so one wild game can't dominate.</p>
-      <p><b>Projected rating</b> is the average of the two (or just the performance rating if nothing is analyzed yet). It's an estimate of the level you played at recently, not a prediction chess.com will produce. Five games is a small sample, so treat swings of ±100 as noise.</p>
-    </details>
-  </section>
-
-  <section class="card hidden" id="historyCard">
-    <h2>Rating over loaded games <span class="sub">your rating after each game</span></h2>
-    <div class="chart" id="historyChart"></div>
-  </section>
-
-  <section class="card hidden" id="reviewCard">
-    <h2 id="reviewTitle">Game review</h2>
-    <div class="progress hidden" id="gameProgress" style="margin-bottom:12px"><div></div></div>
-    <div class="review">
-      <div>
-        <div class="players" id="topPlayer"></div>
-        <div class="board-wrap">
-          <div class="evalbar" id="evalbar"><div class="fill" style="height:50%"></div></div>
-          <div class="board" id="board"></div>
-        </div>
-        <div class="players" id="bottomPlayer"></div>
-        <div class="navbar">
-          <button id="navStart" title="Start (Home)">⏮</button>
-          <button id="navPrev" title="Previous (←)">◀</button>
-          <button id="navNext" title="Next (→)">▶</button>
-          <button id="navEnd" title="End (End)">⏭</button>
-          <button id="navFlip" title="Flip board (F)">⇅</button>
-        </div>
-        <div class="comment" id="comment"></div>
-      </div>
-      <div style="display:grid; gap:16px; align-content:start; min-width:0">
-        <div>
-          <div class="small muted" style="margin-bottom:4px">Win chance through the game (white area = White's chance, dark area = Black's). Click to jump to a move.</div>
-          <div class="chart" id="wpChart"></div>
-        </div>
-        <div class="summary" id="summary"></div>
-        <div>
-          <div class="small" style="font-weight:600;margin-bottom:6px">Turning points</div>
-          <div class="keymom" id="keyMoments"></div>
-        </div>
-        <div class="moves" id="moveList"></div>
-      </div>
+<div class="app">
+  <aside class="side">
+    <div class="profile hidden" id="profile">
+      <div class="name" id="profileName"></div>
+      <div class="chips" id="ratingChips"></div>
     </div>
-  </section>
-
-  <section class="card hidden" id="gamesCard">
-    <h2>Recent games <span class="sub" id="gamesSub"></span><span class="spacer"></span>
+    <div class="gtools hidden" id="gtools">
       <select id="gameFilter"><option value="all">All time controls</option></select>
-      <button id="loadOlder">Load older month</button></h2>
-    <div class="scroll-x"><table id="gamesTable"></table></div>
-  </section>
+      <span class="small muted" id="gamesSub"></span>
+    </div>
+    <div class="glist" id="gameList"><div class="empty">Your games will show up here.</div></div>
+    <div class="gfoot hidden" id="gfoot">
+      <div class="row">
+        <button id="loadOlder" title="Fetch the next older month of games">Older month</button>
+        <button id="loadAll" title="Fetch every month back to your first game">Whole history</button>
+      </div>
+      <div class="progress hidden" id="historyProgress"><div></div></div>
+      <div class="saved" id="savedNote"></div>
+    </div>
+  </aside>
 
-  <p class="small muted" style="text-align:center">Engine: Stockfish 10 (GPLv3) via stockfish.js, running locally. Move rules: chess.js. Game data: chess.com public API. Not affiliated with chess.com.</p>
-</main>
+  <main class="pane">
+    <div id="status" class="status hidden"></div>
+
+    <div class="welcome" id="welcome">
+      <h2>Review your chess games</h2>
+      <p>Type your chess.com username above and press <b>Load</b>. Your recent games, ratings and a projected rating appear right away. Click any game to get a move-by-move review.</p>
+      <p class="small muted">Games and reviews are saved on this server, so they're here next time on any device.</p>
+    </div>
+
+    <nav class="viewtabs hidden" id="viewTabs">
+      <button data-view="overview" class="on">Overview</button>
+      <button data-view="review" id="reviewTab" disabled>Game review</button>
+    </nav>
+
+    <section id="overview" class="hidden">
+      <div class="ovgrid">
+        <div class="card" id="recentCard">
+          <h2>Last 5 rated games <span class="tabs" id="tcTabs"></span><span class="spacer"></span>
+            <button id="analyzeRecent" class="primary">Analyze these 5</button></h2>
+          <div class="tiles" id="recentTiles"></div>
+          <div class="progress hidden" id="batchProgress" style="margin-top:10px"><div></div></div>
+          <div class="scroll-x" style="margin-top:10px"><table id="recentTable"></table></div>
+          <details class="method">
+            <summary>How these numbers are worked out</summary>
+            <p><b>Accuracy</b> scores each move 0 to 100 by how much of your winning chance it kept, then averages them. 100% means every move was the engine's choice or just as good.</p>
+            <p><b>ACPL (average centipawn loss)</b> is how much advantage you gave away per move compared with the best move, measured in hundredths of a pawn. Playing the top move costs 0; hanging a knight costs about 300. Roughly: under 20 is master level, 30 to 50 is a strong club player, 80+ means a few big mistakes. Lower is better.</p>
+            <p><b>Performance rating</b> is the classic results-based figure: the average rating of your last 5 opponents, plus 400 × (wins − losses) ÷ games.</p>
+            <p><b>Accuracy-based rating</b> only uses reviewed games. For each one it compares your ACPL with your opponent's. Using the rough rule that rating scales with e<sup>−ACPL/100</sup>, losing 20 fewer centipawns per move than a 1000-rated opponent reads as about 1000 × e<sup>0.2</sup> ≈ 1220. Each game's ratio is capped at ×0.67 to ×1.5 so one wild game can't dominate.</p>
+            <p><b>Projected rating</b> is the average of the two (or just the performance rating if nothing is reviewed yet). It estimates the level you played at recently. Five games is a small sample, so treat swings of ±100 as noise.</p>
+          </details>
+        </div>
+        <div class="card hidden" id="historyCard">
+          <h2>Rating history <span class="sub">your rating after each loaded game · click a point to review it</span></h2>
+          <div class="chart" id="historyChart"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="reviewView" class="hidden">
+      <div class="rhead" id="reviewHead"></div>
+      <div class="progress hidden" id="gameProgress" style="margin-bottom:10px"><div></div></div>
+      <div class="review">
+        <div class="boardcol">
+          <div class="players" id="topPlayer"></div>
+          <div class="board-wrap">
+            <div class="evalbar" id="evalbar"><div class="fill" style="height:50%"></div></div>
+            <div class="board" id="board"></div>
+          </div>
+          <div class="players" id="bottomPlayer"></div>
+          <div class="navbar">
+            <button id="navStart" title="Start (Home)">⏮</button>
+            <button id="navPrev" title="Previous (←)">◀</button>
+            <button id="navNext" title="Next (→)">▶</button>
+            <button id="navEnd" title="End (End)">⏭</button>
+            <button id="navFlip" title="Flip board (F)">⇅</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="comment" id="comment"></div>
+          <div class="card">
+            <h2>Win chance <span class="sub">white area = White's chance · click to jump to a move</span></h2>
+            <div class="chart" id="wpChart"></div>
+          </div>
+          <div class="split">
+            <div class="card"><h2>Summary</h2><div class="summary" id="summary"></div></div>
+            <div class="card"><h2>Turning points</h2><div class="keymom" id="keyMoments"></div></div>
+          </div>
+          <div class="card"><h2>Moves</h2><div class="moves" id="moveList"></div></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
 
 <script src="lib/chess.js"></script>
 <script src="lib/stockfish-src.js"></script>
+<script src="lib/tactics.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

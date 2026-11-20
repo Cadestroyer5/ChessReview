@@ -1,10 +1,11 @@
-/* Game Review Desk: chess.com games + local Stockfish review. */
+/* Game Review Desk: chess.com games, an in-browser engine review, and games saved on the server. */
 'use strict';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const DRAW_CODES = new Set(['agreed', 'repetition', 'stalemate', 'insufficient', '50move', 'timevsinsufficient']);
 const TC_ORDER = ['rapid', 'blitz', 'bullet', 'daily'];
 const TC_COLOR = { rapid: 'var(--s1)', blitz: 'var(--s2)', bullet: 'var(--s3)', daily: 'var(--s4)' };
+const TACTIC_MIN = 25; // motif weight that counts as a real tactic (not just a check or a threat)
 const TC_LABEL = { rapid: 'Rapid', blitz: 'Blitz', bullet: 'Bullet', daily: 'Daily' };
 const CLS = {
   best:       { label: 'Best',       sym: '★', desc: 'the engine’s top choice' },
@@ -22,6 +23,7 @@ const S = {
   user: '', games: [], archives: [], archiveIdx: -1, stats: null,
   tc: null, current: null, ply: 0, flip: false,
   analyses: new Map(), pending: new Map(), engine: null, batchRunning: false,
+  view: 'overview', server: location.protocol.startsWith('http'), saved: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -66,6 +68,44 @@ async function getJSON(url) {
   return r.json();
 }
 
+/* ---------------- saved games on the server ---------------- */
+const apiBase = () => 'api/user/' + encodeURIComponent(S.user);
+async function api(path, body) {
+  if (!S.server) return null;
+  try {
+    const r = await fetch(apiBase() + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } catch (e) {
+    if (!body) S.server = false; // no save API here (opened as a file, or an older server)
+    else console.warn('Save failed', e);
+    return null;
+  }
+}
+const isPastMonth = (url) => {
+  const m = url.match(/(\d{4})\/(\d{2})$/);
+  if (!m) return false;
+  const now = new Date();
+  return +m[1] * 12 + +m[2] < now.getUTCFullYear() * 12 + now.getUTCMonth() + 1;
+};
+let saveQueue = Promise.resolve();
+function saveGames(raw, monthUrl) {
+  if (!S.server || !raw.length) return;
+  const user = S.user;
+  const body = { games: raw, months: monthUrl && isPastMonth(monthUrl) ? [monthUrl] : [] };
+  saveQueue = saveQueue.then(async () => {
+    if (user !== S.user) return;
+    const r = await api('/games', body);
+    if (r && user === S.user) { S.saved.total = r.total; body.months.forEach((m) => S.saved.months.add(m)); renderSavedNote(); }
+  });
+}
+function saveAnalysis(key, packed) {
+  if (!S.server || !S.saved || S.saved.analysis[key]) return;
+  S.saved.analysis[key] = packed;
+  const user = S.user;
+  saveQueue = saveQueue.then(async () => { if (user === S.user) { const r = await api('/analysis', { key, evals: packed }); if (r) { S.saved.reviews = r.reviews; renderSavedNote(); } } });
+}
+
 function normGame(g) {
   if (!g.pgn || (g.rules && g.rules !== 'chess')) return null;
   const meWhite = g.white.username.toLowerCase() === S.user;
@@ -73,7 +113,7 @@ function normGame(g) {
   const res = me.result === 'win' ? 'W' : DRAW_CODES.has(me.result) ? 'D' : 'L';
   return {
     url: g.url, pgn: g.pgn, end: g.end_time, tc: g.time_class, rated: g.rated !== false,
-    color: meWhite ? 'w' : 'b', res,
+    color: meWhite ? 'w' : 'b', res, raw: g,
     me: { name: me.username, rating: me.rating, result: me.result },
     opp: { name: opp.username, rating: opp.rating, result: opp.result },
     white: g.white, black: g.black,
@@ -82,9 +122,22 @@ function normGame(g) {
 
 async function loadUser(name) {
   S.user = name.trim().toLowerCase();
-  S.games = []; S.current = null; S.archiveIdx = -1; S.tc = null;
-  ['ratingsCard', 'recentCard', 'historyCard', 'gamesCard', 'reviewCard'].forEach((id) => $(id).classList.add('hidden'));
-  setStatus('Loading ' + esc(name) + ' from chess.com…');
+  S.games = []; S.current = null; S.archiveIdx = -1; S.tc = null; S.view = 'overview'; S.profile = null; S.stats = null;
+  S.saved = { months: new Set(), analysis: {}, total: 0, reviews: 0 };
+  S.server = location.protocol.startsWith('http');
+  $('welcome').classList.add('hidden');
+  setStatus('Loading ' + esc(name) + '…');
+  // 1. Whatever is already saved on the server shows up straight away.
+  const saved = await api('');
+  if (saved) {
+    S.saved.months = new Set(saved.months);
+    S.saved.analysis = saved.analysis || {};
+    S.saved.total = saved.games.length;
+    S.saved.reviews = Object.keys(S.saved.analysis).length;
+    S.games = saved.games.map(normGame).filter(Boolean).sort((a, b) => b.end - a.end);
+    if (S.games.length) { pickDefaultTc(); renderAll(); setStatus(S.games.length + ' saved games loaded. Checking chess.com for new ones…'); }
+  }
+  // 2. Then chess.com for profile, ratings and anything new.
   let profile, stats, arch;
   try {
     [profile, stats, arch] = await Promise.all([
@@ -93,6 +146,7 @@ async function loadUser(name) {
       getJSON('https://api.chess.com/pub/player/' + encodeURIComponent(S.user) + '/games/archives'),
     ]);
   } catch (e) {
+    if (S.games.length) { setStatus(esc(e.message === 'not-found' ? 'chess.com doesn’t know this player any more.' : e.message) + ' Showing your saved games.', true); renderAll(); return; }
     setStatus(e.message === 'not-found' ? 'No chess.com player called “' + esc(name) + '”. Check the spelling.' : esc(e.message), true);
     return;
   }
@@ -102,7 +156,7 @@ async function loadUser(name) {
   S.profile = profile;
   S.archives = arch.archives || [];
   S.archiveIdx = S.archives.length;
-  // Pull months (newest first) until there are enough games for a useful history.
+  // Pull months (newest first) until there are enough games for a useful history. Months already saved are skipped.
   while (S.archiveIdx > 0 && S.games.length < 40 && S.archives.length - S.archiveIdx < 3) {
     await loadOlderMonth(false);
   }
@@ -112,25 +166,44 @@ async function loadUser(name) {
     return;
   }
   hideStatus();
-  pickDefaultTc();
+  if (!S.tc) pickDefaultTc();
   renderAll();
 }
 
 async function loadOlderMonth(render = true) {
   if (S.archiveIdx <= 0) return;
+  // Finished months that are already saved need no download: their games are loaded.
+  while (S.archiveIdx > 0 && S.saved.months.has(S.archives[S.archiveIdx - 1])) S.archiveIdx--;
+  if (S.archiveIdx <= 0) { if (render) renderAll(); return; }
   S.archiveIdx--;
   const url = S.archives[S.archiveIdx];
   if (render) $('loadOlder').disabled = true;
   try {
     const data = await getJSON(url);
-    const got = (data.games || []).map(normGame).filter(Boolean);
-    const seen = new Set(S.games.map((g) => g.url));
-    S.games.push(...got.filter((g) => !seen.has(g.url)));
+    const raw = (data.games || []).filter((g) => g.url);
+    const got = raw.map(normGame).filter(Boolean);
+    const seen = new Map(S.games.map((g, i) => [g.url, i]));
+    got.forEach((g) => { if (seen.has(g.url)) S.games[seen.get(g.url)] = Object.assign(g, { _parsed: S.games[seen.get(g.url)]._parsed }); else S.games.push(g); });
     S.games.sort((a, b) => b.end - a.end);
+    saveGames(raw, url);
   } catch (e) {
     setStatus('Could not load ' + esc(url.split('/').slice(-2).join('/')) + ': ' + esc(e.message), true);
   }
   if (render) renderAll();
+}
+
+async function loadWholeHistory() {
+  const btn = $('loadAll'), bar = $('historyProgress');
+  btn.disabled = true; $('loadOlder').disabled = true;
+  bar.classList.remove('hidden');
+  const total = S.archiveIdx;
+  while (S.archiveIdx > 0) {
+    await loadOlderMonth(false);
+    bar.firstElementChild.style.width = ((total - S.archiveIdx) / Math.max(1, total) * 100) + '%';
+    $('savedNote').textContent = 'Fetching ' + (S.archives[S.archiveIdx] || '').split('/').slice(-2).join('/') + ' · ' + S.games.length + ' games so far…';
+  }
+  bar.classList.add('hidden');
+  renderAll();
 }
 
 function pickDefaultTc() {
@@ -161,13 +234,13 @@ class Engine {
       this.listener = (line) => {
         if (line.startsWith('info') && line.includes(' score ') && !line.includes('bound')) {
           const m = line.match(/score (cp|mate) (-?\d+)/);
-          const pv = line.match(/ pv (\S+)/);
+          const pv = line.match(/ pv (.+)$/);
           if (m) last = m[1] === 'cp' ? { cp: sgn * +m[2] } : { mate: sgn * +m[2] };
-          if (pv) last.best = pv[1];
+          if (pv) { const mv = pv[1].trim().split(/\s+/).slice(0, 10); last.best = mv[0]; last.pv = mv; }
         } else if (line.startsWith('bestmove')) {
           this.listener = null;
           const bm = line.split(' ')[1];
-          if (bm && bm !== '(none)') last.best = bm;
+          if (bm && bm !== '(none)') { if (last.best !== bm) last.pv = [bm]; last.best = bm; }
           resolve(last);
         }
       };
@@ -182,6 +255,16 @@ function engine() { if (!S.engine) S.engine = new Engine(); return S.engine; }
 
 /* ---------------- analysis ---------------- */
 const akey = (g, d = depth()) => g.url + '|' + d;
+const packEvals = (evals) => evals.map((e) => [e.cp ?? null, e.mate ?? null, e.best || null, e.term || null, e.pv ? e.pv.join(' ') : null]);
+const unpackEvals = (arr) => arr.map((e) => {
+  const o = {};
+  if (e[0] != null) o.cp = e[0];
+  if (e[1] != null) o.mate = e[1];
+  if (e[2]) o.best = e[2];
+  if (e[3]) o.term = e[3];
+  if (e[4]) o.pv = e[4].split(' ');
+  return o;
+});
 
 function parseGame(game) {
   const c = new Chess();
@@ -254,17 +337,13 @@ function buildAnalysis(game, parsed, evals, d) {
 function cachedAnalysis(game, d = depth()) {
   const k = akey(game, d);
   if (S.analyses.has(k)) return S.analyses.get(k);
-  const raw = store.get('grd:v1:' + k);
-  if (!raw) return null;
+  const fromServer = S.saved && S.saved.analysis[k];
+  const raw = fromServer ? null : store.get('grd:v1:' + k);
+  if (!fromServer && !raw) return null;
   try {
-    const evals = JSON.parse(raw).map((e) => {
-      const o = {};
-      if (e[0] != null) o.cp = e[0];
-      if (e[1] != null) o.mate = e[1];
-      if (e[2]) o.best = e[2];
-      if (e[3]) o.term = e[3];
-      return o;
-    });
+    const packed = fromServer || JSON.parse(raw);
+    const evals = unpackEvals(packed);
+    if (!fromServer) saveAnalysis(k, packed); // reviewed in this browser before saving existed: copy it up
     const parsed = parseGame(game);
     if (evals.length !== parsed.fens.length) return null;
     const a = buildAnalysis(game, parsed, evals, d);
@@ -296,7 +375,9 @@ function getAnalysis(game, onProgress) {
       evals.push(term || await eng.analyse(fen, d));
       entry.listeners.forEach((f) => f(i + 1, total));
     }
-    store.set('grd:v1:' + k, JSON.stringify(evals.map((e) => [e.cp ?? null, e.mate ?? null, e.best || null, e.term || null])));
+    const packed = packEvals(evals);
+    store.set('grd:v1:' + k, JSON.stringify(packed));
+    saveAnalysis(k, packed);
     const a = buildAnalysis(game, parsed, evals, d);
     S.analyses.set(k, a);
     S.pending.delete(k);
@@ -354,36 +435,64 @@ function hideStatus() { $('status').classList.add('hidden'); }
 
 function renderAll() {
   renderRatings();
-  renderRecent();
-  renderHistory();
   renderGamesFilter();
   renderGamesTable();
+  renderSavedNote();
+  renderView();
+  renderRecent();
+  renderHistory();
   if (S.current) renderReview();
+}
+
+function setView(v) {
+  if (v === 'review' && !S.current) return;
+  S.view = v;
+  renderView();
+  if (v === 'overview') { renderRecent(); renderHistory(); } else renderReview();
+  document.querySelector('main.pane').scrollTop = 0;
+}
+function renderView() {
+  if (!S.games.length) return;
+  $('viewTabs').classList.remove('hidden');
+  $('reviewTab').disabled = !S.current;
+  $('viewTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.view === S.view));
+  $('overview').classList.toggle('hidden', S.view !== 'overview');
+  $('reviewView').classList.toggle('hidden', S.view !== 'review');
 }
 
 function renderRatings() {
   const p = S.profile || {};
-  $('profileTitle').innerHTML = esc(p.username || S.user) + (p.title ? ' <span class="sub">' + esc(p.title) + '</span>' : '') +
-    ' <span class="sub">current chess.com ratings</span>';
-  const tiles = [];
+  $('profile').classList.remove('hidden');
+  $('profileName').innerHTML = esc(p.username || S.user) + (p.title ? ' <span class="small muted">' + esc(p.title) + '</span>' : '');
+  const chips = [];
   TC_ORDER.forEach((tc) => {
     const st = S.stats && S.stats['chess_' + tc];
     if (!st || !st.last) return;
     const rec = st.record || {};
-    tiles.push(`<div class="tile"><div class="label">${TC_LABEL[tc]}</div><div class="value">${st.last.rating}</div>
-      <div class="foot">Best ${st.best ? st.best.rating : '—'} · ${rec.win || 0}W ${rec.loss || 0}L ${rec.draw || 0}D</div></div>`);
+    chips.push(`<div class="chip" style="--c:${TC_COLOR[tc]}" title="Best ${st.best ? st.best.rating : '—'} · ${rec.win || 0} wins, ${rec.loss || 0} losses, ${rec.draw || 0} draws">
+      <div class="l">${TC_LABEL[tc]}</div><div class="v">${st.last.rating}</div><div class="f">best ${st.best ? st.best.rating : '—'}</div></div>`);
   });
-  $('ratingTiles').innerHTML = tiles.join('') || '<div class="muted">No rated games yet.</div>';
-  $('ratingsCard').classList.remove('hidden');
+  $('ratingChips').innerHTML = chips.join('') || (S.stats ? '<div class="small muted">No rated games yet.</div>' : '<div class="small muted">Ratings appear once chess.com answers.</div>');
+}
+
+function renderSavedNote() {
+  const el = $('savedNote');
+  if (!S.games.length) return;
+  $('gfoot').classList.remove('hidden');
+  const left = S.archiveIdx > 0 ? S.archives.slice(0, S.archiveIdx).filter((u) => !S.saved.months.has(u)).length : 0;
+  $('loadOlder').disabled = left === 0;
+  $('loadAll').disabled = left === 0;
+  $('loadAll').textContent = left ? 'Whole history (' + left + ' mo)' : 'All history loaded';
+  if (!S.server) { el.textContent = 'Not saving: open this page from the server to keep games.'; return; }
+  el.innerHTML = `<b>✓ Saved on the server</b> · ${S.saved.total} games, ${S.saved.reviews} reviewed`;
 }
 
 function renderRecent() {
-  if (!S.games.length) return;
+  if (!S.games.length || S.view !== 'overview') return;
   const tcs = tcsPresent();
   if (!tcs.includes(S.tc)) S.tc = tcs[0];
   $('tcTabs').innerHTML = tcs.map((tc) => `<button data-tc="${tc}" class="${tc === S.tc ? 'on' : ''}">${TC_LABEL[tc]}</button>`).join('');
   const pr = projection(S.tc);
-  $('recentCard').classList.remove('hidden');
   if (!pr) {
     $('recentTiles').innerHTML = '<div class="muted">No rated ' + TC_LABEL[S.tc].toLowerCase() + ' games loaded.</div>';
     $('recentTable').innerHTML = '';
@@ -393,32 +502,32 @@ function renderRecent() {
   const delta = (v) => v == null ? '' : `<span class="${v >= 0 ? 'delta-up' : 'delta-down'}">${v >= 0 ? '▲ +' : '▼ −'}${Math.abs(Math.round(v))}</span>`;
   const vsNow = (v) => pr.now == null ? '' : ' · ' + delta(v - pr.now) + ' vs now';
   $('recentTiles').innerHTML = `
-    <div class="tile"><div class="label">Current ${TC_LABEL[S.tc]}</div><div class="value">${pr.now ?? '—'}</div>
+    <div class="tile"><div class="label">Current</div><div class="value">${pr.now ?? '—'}</div>
       <div class="foot">${pr.change != null ? delta(pr.change) + ' over these ' + pr.n : 'Change unavailable'}</div></div>
     <div class="tile"><div class="label">Performance</div><div class="value">${Math.round(pr.perf)}</div>
       <div class="foot">${pr.W}W ${pr.L}L ${pr.D}D vs avg ${Math.round(pr.avgOpp)}${vsNow(pr.perf)}</div></div>
     <div class="tile"><div class="label">Accuracy-based</div><div class="value">${pr.accEst != null ? Math.round(pr.accEst) : '—'}</div>
-      <div class="foot">${pr.analyzed ? pr.analyzed + ' of ' + pr.n + ' games analyzed' : 'Analyze the games to fill this in'}</div></div>
-    <div class="tile" style="box-shadow: inset 3px 0 0 var(--accent)"><div class="label">Projected rating</div><div class="value">${Math.round(pr.projected)}</div>
+      <div class="foot">${pr.analyzed ? pr.analyzed + ' of ' + pr.n + ' reviewed' : 'Review the games to fill this in'}</div></div>
+    <div class="tile key"><div class="label">Projected</div><div class="value">${Math.round(pr.projected)}</div>
       <div class="foot">${pr.analyzed ? 'Blend of both' : 'Results only so far'}${vsNow(pr.projected)}</div></div>`;
   const rows = pr.games.map((g) => {
     const a = cachedAnalysis(g);
     const mine = a && a[g.color], theirs = a && a[g.color === 'w' ? 'b' : 'w'];
     const busy = S.pending.has(akey(g));
-    return `<tr class="${S.current && S.current.url === g.url ? 'sel' : ''}">
+    return `<tr data-review="${esc(g.url)}" class="${S.current && S.current.url === g.url ? 'sel' : ''}">
       <td>${fmtDate(g.end)}</td><td><span class="dot ${g.color}"></span></td>
       <td>${esc(g.opp.name)} <span class="muted">(${g.opp.rating})</span></td>
       <td><span class="res ${g.res}">${g.res}</span></td>
-      <td>${mine && mine.accuracy != null ? mine.accuracy.toFixed(1) + '%' : busy ? '<span class="muted">analyzing…</span>' : '<span class="muted">—</span>'}</td>
+      <td>${mine && mine.accuracy != null ? mine.accuracy.toFixed(1) + '%' : busy ? '<span class="muted">reviewing…</span>' : '<span class="muted">—</span>'}</td>
       <td>${theirs && theirs.accuracy != null ? theirs.accuracy.toFixed(1) + '%' : '<span class="muted">—</span>'}</td>
-      <td>${mine && mine.acpl != null ? Math.round(mine.acpl) : '<span class="muted">—</span>'}</td>
-      <td><button data-review="${esc(g.url)}">Review</button></td></tr>`;
+      <td>${mine && mine.acpl != null ? Math.round(mine.acpl) : '<span class="muted">—</span>'}</td></tr>`;
   });
-  $('recentTable').innerHTML = `<tr><th>Date</th><th>Side</th><th>Opponent</th><th>Result</th><th>Your accuracy</th><th>Their accuracy</th><th>Your ACPL</th><th></th></tr>` + rows.join('');
+  $('recentTable').innerHTML = `<thead><tr><th>Date</th><th>Side</th><th>Opponent</th><th>Result</th><th>Your accuracy</th><th>Their accuracy</th><th>Your ACPL <span class="info" title="${esc(ACPL_HELP)}">?</span></th></tr></thead><tbody>` + rows.join('') + '</tbody>';
   const allDone = pr.games.every((g) => cachedAnalysis(g));
   $('analyzeRecent').disabled = S.batchRunning || allDone;
-  $('analyzeRecent').textContent = allDone ? 'All 5 analyzed' : S.batchRunning ? 'Analyzing…' : 'Analyze these ' + pr.n;
+  $('analyzeRecent').textContent = allDone ? 'All ' + pr.n + ' reviewed' : S.batchRunning ? 'Reviewing…' : 'Review these ' + pr.n;
 }
+const ACPL_HELP = 'Average centipawn loss: how much advantage was given away per move compared with the best move, in hundredths of a pawn. Lower is better. Under 20 is master level, 30–50 strong club, 80+ means a few big mistakes.';
 
 async function analyzeRecent() {
   const pr = projection(S.tc);
@@ -435,7 +544,7 @@ async function analyzeRecent() {
       gi++;
     }
   } catch (e) {
-    setStatus('Analysis stopped: ' + esc(e.message), true);
+    setStatus('Review stopped: ' + esc(e.message), true);
   }
   S.batchRunning = false;
   bar.classList.add('hidden');
@@ -451,22 +560,23 @@ function renderGamesFilter() {
 
 function renderGamesTable() {
   if (!S.games.length) return;
-  $('gamesCard').classList.remove('hidden');
+  $('gtools').classList.remove('hidden');
   const f = $('gameFilter').value;
   const list = S.games.filter((g) => f === 'all' || g.tc === f);
-  const months = S.archives.length - S.archiveIdx;
-  $('gamesSub').textContent = list.length + ' games from the last ' + months + ' month' + (months === 1 ? '' : 's');
-  $('loadOlder').disabled = S.archiveIdx <= 0;
-  $('gamesTable').innerHTML = `<tr><th>Date</th><th>Type</th><th>Side</th><th>Opponent</th><th>Your rating</th><th>Result</th><th>Your accuracy</th><th></th></tr>` +
-    list.map((g) => {
-      const a = cachedAnalysis(g);
-      const acc = a && a[g.color].accuracy;
-      return `<tr class="${S.current && S.current.url === g.url ? 'sel' : ''}"><td>${fmtDate(g.end)}</td><td>${TC_LABEL[g.tc] || esc(g.tc)}${g.rated ? '' : ' <span class="muted small">unrated</span>'}</td>
-        <td><span class="dot ${g.color}"></span></td><td>${esc(g.opp.name)} <span class="muted">(${g.opp.rating})</span></td>
-        <td>${g.me.rating}</td><td><span class="res ${g.res}">${g.res}</span> <span class="muted small">${esc(resultWord(g))}</span></td>
-        <td>${acc != null ? acc.toFixed(1) + '%' : '<span class="muted">—</span>'}</td>
-        <td><button data-review="${esc(g.url)}">Review</button></td></tr>`;
-    }).join('');
+  $('gamesSub').textContent = list.length + ' game' + (list.length === 1 ? '' : 's');
+  const el = $('gameList');
+  const keep = el.scrollTop;
+  el.innerHTML = list.map((g) => {
+    const a = cachedAnalysis(g);
+    const acc = a && a[g.color].accuracy;
+    const busy = S.pending.has(akey(g));
+    return `<button class="grow${S.current && S.current.url === g.url ? ' sel' : ''}" data-review="${esc(g.url)}">
+      <span class="res ${g.res}">${g.res}</span>
+      <span style="min-width:0"><div class="opp"><span class="dot ${g.color}"></span> ${esc(g.opp.name)} <span class="muted">(${g.opp.rating})</span></div>
+        <div class="meta">${TC_LABEL[g.tc] || esc(g.tc)}${g.rated ? '' : ' (unrated)'} · ${fmtDate(g.end)} · ${esc(resultWord(g) || '')}</div></span>
+      <span class="acc">${acc != null ? acc.toFixed(0) + '%<span class="sub">accuracy</span>' : busy ? '<span class="sub">reviewing</span>' : ''}</span></button>`;
+  }).join('') || '<div class="empty">No games for this time control.</div>';
+  el.scrollTop = keep;
 }
 
 function resultWord(g) {
@@ -476,6 +586,7 @@ function resultWord(g) {
 
 /* ---- rating history chart ---- */
 function renderHistory() {
+  if (S.view !== 'overview') return;
   const el = $('historyChart');
   const tcs = tcsPresent();
   const series = tcs.map((tc) => ({ tc, pts: S.games.filter((g) => g.tc === tc && g.rated).slice().reverse() })).filter((s) => s.pts.length > 1);
@@ -561,11 +672,9 @@ async function openReview(game) {
   S.current = game;
   S.flip = game.color === 'b';
   S.ply = 0;
-  $('reviewCard').classList.remove('hidden');
   renderGamesTable();
-  renderRecent();
-  renderReview();
-  $('reviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setView('review');
+  if (matchMedia('(max-width: 980px)').matches) $('reviewView').scrollIntoView({ behavior: 'smooth', block: 'start' });
   const bar = $('gameProgress');
   if (!cachedAnalysis(game)) {
     bar.classList.remove('hidden');
@@ -575,7 +684,7 @@ async function openReview(game) {
         if (S.current === game) bar.firstElementChild.style.width = (d / t * 100) + '%';
       });
     } catch (e) {
-      setStatus('Could not analyze this game: ' + esc(e.message), true);
+      setStatus('Could not review this game: ' + esc(e.message), true);
     }
     bar.classList.add('hidden');
   }
@@ -595,12 +704,15 @@ function currentData() {
 
 function renderReview() {
   const g = S.current;
-  if (!g) return;
+  if (!g || S.view !== 'review') return;
   let data;
   try { data = currentData(); } catch (e) { setStatus(esc(e.message), true); return; }
   const { a, fens, moves } = data;
   S.ply = Math.max(0, Math.min(S.ply, moves.length));
-  $('reviewTitle').innerHTML = `Game review <span class="sub">${TC_LABEL[g.tc] || esc(g.tc)} · ${fmtDateLong(g.end)} · <a href="${esc(g.url)}" target="_blank" rel="noopener" style="color:var(--accent)">open on chess.com</a>${a ? ' · Stockfish depth ' + a.depth : ' · analyzing…'}</span>`;
+  $('reviewHead').innerHTML = `<span class="res ${g.res}">${g.res}</span>
+    <span class="vs">${esc(g.me.name)} <span class="muted" style="font-weight:400">vs</span> ${esc(g.opp.name)} <span class="muted" style="font-weight:400">(${g.opp.rating})</span></span>
+    <span class="sub">${TC_LABEL[g.tc] || esc(g.tc)} · ${fmtDateLong(g.end)}${resultWord(g) ? ' · by ' + esc(resultWord(g)) : ''} · ${a ? 'engine depth ' + a.depth : 'reviewing…'}</span>
+    <span class="spacer"></span><a href="${esc(g.url)}" target="_blank" rel="noopener" class="small">Open on chess.com ↗</a>`;
   const pl = (p, c) => `<span><span class="dot ${c}"></span> <b>${esc(p.username)}</b> <span class="muted">(${p.rating})</span></span>` +
     (a && a[c].accuracy != null ? `<span class="muted">${a[c].accuracy.toFixed(1)}% accuracy</span>` : '<span></span>');
   $('topPlayer').innerHTML = S.flip ? pl(g.white, 'w') : pl(g.black, 'b');
@@ -665,25 +777,145 @@ function arrowSvg(uci, color) {
 
 function moveLabel(i, m) { return Math.floor(i / 2) + 1 + (m.color === 'w' ? '. ' : '… ') + m.san; }
 
+/* ---- move explanations ---- */
+const pieceWord = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
+const realTactics = (list) => list.filter((t) => t.weight >= TACTIC_MIN);
+
+// Engine line as numbered SAN, starting from fen.
+function lineText(fen, ucis, n = 8) {
+  if (!ucis || !ucis.length) return '';
+  const ln = Tactics.line(fen, ucis.slice(0, n));
+  let num = +fen.split(' ')[5] || 1, white = fen.split(' ')[1] === 'w';
+  return ln.sans.map((san, i) => {
+    let t = '';
+    if (white) t = num + '. ' + san; else t = (i === 0 ? num + '… ' : '') + san;
+    if (!white) num++;
+    white = !white;
+    return t;
+  }).join(' ');
+}
+// Look for tactics along an engine line: the first move, then the same side's next two moves.
+// Later moves in the line need a stronger motif (45+: a fork, skewer, mate, a free minor piece…).
+function tacticsInLine(fen, ucis, prevUci) {
+  if (!ucis || !ucis.length) return null;
+  const ln = Tactics.line(fen, ucis.slice(0, 5));
+  let cur = fen;
+  for (let i = 0; i < ln.uci.length; i++) {
+    if (i % 2 === 0) {
+      const t = Tactics.motifs(cur, ln.uci[i], i ? ln.uci[i - 1] : prevUci).filter((x) => x.weight >= (i ? 45 : TACTIC_MIN));
+      if (t.length) return { at: i, san: ln.sans[i], prefix: ln.sans.slice(0, i), tactics: t };
+    }
+    cur = ln.fens[i];
+  }
+  return null;
+}
+// Material swing for `color` along a line (in pawns), e.g. -3 means they end up a piece down.
+function lineMaterial(fen, ucis, color, n = 8) {
+  if (!ucis || !ucis.length) return 0;
+  const ln = Tactics.line(fen, ucis.slice(0, n));
+  if (!ln.fens.length) return 0;
+  const sgn = color === 'w' ? 1 : -1;
+  return sgn * (Tactics.material(ln.fens[ln.fens.length - 1]) - Tactics.material(fen));
+}
+
+// Everything the review says about one move. Cached on the ply.
+function explain(m, g, prev) {
+  if (m._why) return m._why;
+  const prevUci = prev ? prev.uci : null;
+  const me = m.color, mine = me === g.color;
+  const you = mine ? 'you' : 'your opponent', your = mine ? 'your' : 'their';
+  const fenAfter = Tactics.line(m.fenBefore, [m.uci]).fens[0];
+  const eb = m.evalBefore, ea = m.evalAfter;
+  const bestLine = eb.pv && eb.pv.length ? eb.pv : eb.best ? [eb.best] : [];
+  const replyLine = ea.pv && ea.pv.length ? ea.pv : ea.best ? [ea.best] : [];
+  const out = { found: [], missed: [], allowed: [], notes: [], bestLine: '', replyLine: '', tags: { found: [], missed: [], allowed: [] } };
+  const mateFor = (e, c) => e && e.mate != null && (c === 'w' ? e.mate > 0 : e.mate < 0) ? Math.abs(e.mate) : null;
+
+  // What the move itself does.
+  const found = realTactics(Tactics.motifs(m.fenBefore, m.uci, prevUci));
+  found.slice(0, 3).forEach((t) => { out.found.push(t.text); out.tags.found.push(t.type); });
+  if (!found.length && m.cls !== 'forced') {
+    const any = Tactics.motifs(m.fenBefore, m.uci, prevUci)[0];
+    if (any && ['best', 'excellent', 'good'].includes(m.cls)) out.found.push(any.text);
+  }
+  const mateAfter = mateFor(ea, me);
+  if (mateAfter && !ea.term) out.found.push(mateAfter === 1 ? 'Mate is coming next move.' : 'Sets up a forced mate in ' + mateAfter + '.');
+
+  const fellShort = !['best', 'excellent', 'forced'].includes(m.cls) && bestLine.length && bestLine[0] !== m.uci;
+  if (fellShort) {
+    // Mates thrown away or allowed.
+    const hadMate = mateFor(eb, me);
+    if (hadMate && !mateAfter) out.missed.push(`${mine ? 'You' : 'They'} had a forced mate in ${hadMate}, starting with ${Tactics.line(m.fenBefore, [bestLine[0]]).sans[0]}.`);
+    const oppMate = mateFor(ea, me === 'w' ? 'b' : 'w');
+    if (oppMate && !ea.term) {
+      out.allowed.push(`It allows a forced mate in ${oppMate}: ${lineText(fenAfter, replyLine, oppMate * 2 - 1)}.`);
+      out.tags.allowed.push('forced mate');
+    }
+
+    // Tactics the better move (or its follow-up) had.
+    const miss = tacticsInLine(m.fenBefore, bestLine, prevUci);
+    if (miss) {
+      const lead = miss.at === 0 ? `Missed ${miss.san}. ` : `Missed ${Tactics.line(m.fenBefore, [bestLine[0]]).sans[0]}: after ${miss.prefix.join(' ')}, ${miss.san} comes with a tactic. `;
+      out.missed.push(lead + miss.tactics[0].text);
+      miss.tactics.slice(0, 2).forEach((t) => out.tags.missed.push(t.type));
+    }
+    // Tactics the opponent now has.
+    const opp = fenAfter && !(oppMate && !ea.term) ? tacticsInLine(fenAfter, replyLine, m.uci) : null;
+    if (opp) {
+      const lead = opp.at === 0 ? `It allows ${opp.san}. ` : `It allows ${Tactics.line(fenAfter, [replyLine[0]]).sans[0]}, and after ${opp.prefix.join(' ')} comes ${opp.san}. `;
+      out.allowed.push(lead + opp.tactics[0].text);
+      opp.tactics.slice(0, 2).forEach((t) => out.tags.allowed.push(t.type));
+    }
+    // Pieces left hanging that the opponent actually goes after.
+    const hung = Tactics.hanging(m.fenBefore, m.uci);
+    const replyTo = replyLine[0] ? replyLine[0].slice(2, 4) : null;
+    const h = hung.find((x) => x.sq === replyTo);
+    if (h && !out.allowed.length) { out.allowed.push(`It leaves ${your} ${h.piece} on ${h.sq} hanging to the ${h.by}.`); out.tags.allowed.push('hanging piece'); }
+
+    // Material: how the two lines end up.
+    const gotBest = lineMaterial(m.fenBefore, bestLine, me);
+    const gotPlayed = lineMaterial(m.fenBefore, [m.uci].concat(replyLine), me, 9);
+    const diff = Math.round(gotBest - gotPlayed);
+    if (diff >= 2) out.notes.push(`Over the engine's lines that's about ${diff} pawn${diff === 1 ? '' : 's'} of material worse than the best move.`);
+    else if (!out.missed.length && !out.allowed.length) {
+      out.notes.push(m.cls === 'good' ? 'No tactic involved: it\'s fine, there was just a slightly more precise move.'
+        : m.cls === 'inaccuracy' ? 'No tactic involved: a quieter slip. Compare the engine\'s line below with what happens next.'
+        : 'No standard tactic (fork, pin, skewer…) right away: the damage is positional or arrives a few moves later. The two lines below show the difference.');
+    }
+    out.bestLine = lineText(m.fenBefore, bestLine);
+    out.replyLine = fenAfter ? lineText(fenAfter, replyLine, 6) : '';
+  } else if (m.cls === 'best' || m.cls === 'excellent') {
+    if (!out.found.length) out.found.push(m.cls === 'best' ? 'The engine\'s top choice. Nothing better was available.' : 'As good as the engine\'s choice for practical purposes.');
+  }
+  m._why = out;
+  return out;
+}
+
 function renderComment({ g, a, moves }) {
   const el = $('comment');
+  el.className = 'comment';
   if (S.ply === 0) {
-    el.innerHTML = a ? `Start position. Use ← → (or click the graph or a move) to step through. Green arrows show what Stockfish preferred when a move fell short.`
-      : `<span class="muted">Stockfish is reviewing this game in your browser. You can already step through the moves.</span>`;
+    el.innerHTML = a ? `<div class="ttl"><b>Start position</b></div>Step through with ← → or click a move, the graph or a turning point. Each move gets an explanation: tactics found, missed or allowed, and the engine's line. Green arrows show the better move.`
+      : `<span class="muted">The engine is reviewing this game in your browser. You can already step through the moves.</span>`;
     return;
   }
   const i = S.ply - 1;
   const m = moves[i];
-  if (!a) { el.innerHTML = `<b>${esc(moveLabel(i, m))}</b> <span class="muted">· waiting for the engine…</span>`; return; }
-  const who = m.color === 'w' ? 'White' : 'Black';
-  const mineOrTheirs = m.color === g.color ? 'You' : 'Your opponent';
-  const after = fmtEval(m.evalAfter);
-  const moverWp = m.color === 'w' ? m.wpAfter : 100 - m.wpAfter;
-  let txt = `<span class="cls-${m.cls}"><span class="badge">${CLS[m.cls].sym}</span> <b>${esc(moveLabel(i, m))}</b> is <span class="cls">${CLS[m.cls].label.toLowerCase()}</span></span>: ${CLS[m.cls].desc}.`;
-  txt += ` <span class="muted">(${mineOrTheirs} played it.)</span><br>Eval after: <b>${after}</b> · ${who}'s win chance ${Math.round(moverWp)}%`;
-  if (m.loss >= 1 && !['best', 'excellent', 'forced'].includes(m.cls)) txt += ` (−${m.loss.toFixed(1)} pts)`;
-  if (m.bestSan && m.cls !== 'best' && m.cls !== 'excellent') txt += `<br>Stockfish preferred <b>${esc(m.bestSan)}</b>, which kept the eval at ${fmtEval(m.evalBefore)}.`;
-  el.innerHTML = txt;
+  if (!a) { el.innerHTML = `<div class="ttl"><b>${esc(moveLabel(i, m))}</b> <span class="muted">· waiting for the engine…</span></div>`; return; }
+  el.classList.add('cls-' + m.cls);
+  const who = m.color === g.color ? 'You' : 'Your opponent';
+  const moverWp = (wp) => Math.round(m.color === 'w' ? wp : 100 - wp);
+  let w;
+  try { w = explain(m, g, moves[i - 1]); } catch (e) { console.warn(e); w = { found: [], missed: [], allowed: [], notes: [], bestLine: '', replyLine: '' }; }
+  const li = (arr, icon, cls) => arr.map((t) => `<li><i class="${cls}">${icon}</i>${esc(t)}</li>`).join('');
+  let html = `<div class="ttl"><span class="badge cls-${m.cls}">${CLS[m.cls].sym}</span><b>${esc(moveLabel(i, m))}</b> <span>${CLS[m.cls].label}</span>
+    <span class="muted small">· ${who} · ${CLS[m.cls].desc}</span></div>`;
+  const items = li(w.found, '✓', 'f') + li(w.missed, '✗', 'm') + li(w.allowed, '⚠', 'a') + li(w.notes, '•', 'n');
+  if (items) html += `<ul class="why">${items}</ul>`;
+  if (w.bestLine) html += `<div class="evals">Best was <b>${esc(m.bestSan || '')}</b> (${fmtEval(m.evalBefore)}): <span class="line">${esc(w.bestLine)}</span></div>`;
+  if (w.replyLine && (w.allowed.length || ['mistake', 'blunder'].includes(m.cls))) html += `<div class="evals">After this move the engine expects: <span class="line">${esc(w.replyLine)}</span></div>`;
+  html += `<div class="evals">Eval ${fmtEval(m.evalBefore)} → <b>${fmtEval(m.evalAfter)}</b> · ${m.color === 'w' ? 'White' : 'Black'}'s win chance ${moverWp(m.wpBefore)}% → ${moverWp(m.wpAfter)}%</div>`;
+  el.innerHTML = html;
 }
 
 function renderMoveList({ a, moves }) {
@@ -717,11 +949,30 @@ function renderSummary({ g, a }) {
   const youW = g.color === 'w' ? ' (you)' : '', youB = g.color === 'b' ? ' (you)' : '';
   let html = `<div></div><div class="h num">${wName}${youW}</div><div class="h num">${bName}${youB}</div>
     <div>Accuracy</div><div class="num acc">${a.w.accuracy != null ? a.w.accuracy.toFixed(1) : '—'}</div><div class="num acc">${a.b.accuracy != null ? a.b.accuracy.toFixed(1) : '—'}</div>
-    <div>Avg centipawn loss</div><div class="num">${a.w.acpl != null ? Math.round(a.w.acpl) : '—'}</div><div class="num">${a.b.acpl != null ? Math.round(a.b.acpl) : '—'}</div>`;
+    <div>ACPL <span class="info" title="${esc(ACPL_HELP)}">?</span></div><div class="num">${a.w.acpl != null ? Math.round(a.w.acpl) : '—'}</div><div class="num">${a.b.acpl != null ? Math.round(a.b.acpl) : '—'}</div>`;
   CLS_ORDER.forEach((k) => {
     html += `<div class="cls-${k}"><span class="badge">${CLS[k].sym}</span> ${CLS[k].label}</div><div class="num">${a.w.counts[k]}</div><div class="num">${a.b.counts[k]}</div>`;
   });
+  const tt = tacticTally(g, a);
+  html += `<div class="rule"></div><div>Tactics found</div><div class="num">${tt.w.found}</div><div class="num">${tt.b.found}</div>
+    <div>Tactics missed</div><div class="num">${tt.w.missed}</div><div class="num">${tt.b.missed}</div>`;
+  if (tt.list.length) html += `<div class="small muted" style="grid-column:1/-1;margin-top:4px">${esc(tt.list.join(' · '))}</div>`;
   el.innerHTML = html;
+}
+
+function tacticTally(g, a) {
+  if (a._tally) return a._tally;
+  const t = { w: { found: 0, missed: 0 }, b: { found: 0, missed: 0 }, list: [] };
+  const named = {};
+  a.plies.forEach((m, i) => {
+    let w; try { w = explain(m, g, a.plies[i - 1]); } catch (e) { return; }
+    const who = m.color === g.color ? 'you' : 'opp';
+    if (w.tags.found.length) { t[m.color].found++; named[who + ' found ' + w.tags.found[0]] = (named[who + ' found ' + w.tags.found[0]] || 0) + 1; }
+    if (w.tags.missed.length) { t[m.color].missed++; named[who + ' missed ' + w.tags.missed[0]] = (named[who + ' missed ' + w.tags.missed[0]] || 0) + 1; }
+  });
+  t.list = Object.entries(named).filter(([k]) => k.startsWith('you')).map(([k, n]) => k.replace(/^you /, 'You ') + (n > 1 ? ' ×' + n : ''));
+  a._tally = t;
+  return t;
 }
 
 function renderKeyMoments({ g, a, moves }) {
@@ -729,14 +980,18 @@ function renderKeyMoments({ g, a, moves }) {
   if (!a) { el.innerHTML = '<div class="muted small">After analysis.</div>'; return; }
   const top = moves.map((m, i) => ({ m, i })).filter((x) => x.m.loss >= 8).sort((p, q) => q.m.loss - p.m.loss).slice(0, 4).sort((p, q) => p.i - q.i);
   if (!top.length) { el.innerHTML = '<div class="muted small">No big swings. A clean game from both sides.</div>'; return; }
-  el.innerHTML = top.map(({ m, i }) => `<button data-ply="${i + 1}" class="cls-${m.cls}"><span class="badge">${CLS[m.cls].sym}</span>
-    <b>${esc(moveLabel(i, m))}</b> ${m.color === g.color ? 'by you' : 'by opponent'} · win chance −${Math.round(m.loss)} pts${m.bestSan ? ' · better: ' + esc(m.bestSan) : ''}</button>`).join('');
+  el.innerHTML = top.map(({ m, i }) => {
+    let tag = '';
+    try { const w = explain(m, g, moves[i - 1]); tag = w.tags.allowed[0] ? 'allowed a ' + w.tags.allowed[0] : w.tags.missed[0] ? 'missed a ' + w.tags.missed[0] : ''; } catch (e) { /* ignore */ }
+    return `<button data-ply="${i + 1}" class="cls-${m.cls}"><span class="badge">${CLS[m.cls].sym}</span>
+    <b>${esc(moveLabel(i, m))}</b> ${m.color === g.color ? 'by you' : 'by opponent'} · −${Math.round(m.loss)}%${tag ? ' · ' + esc(tag) : ''}${m.bestSan ? ' · better: ' + esc(m.bestSan) : ''}</button>`;
+  }).join('');
 }
 
 function renderWpChart({ g, a, moves }) {
   const el = $('wpChart');
   const W = Math.max(300, el.clientWidth || 700), H = 190, m = { l: 34, r: 8, t: 8, b: 22 };
-  if (!a) { el.innerHTML = `<svg viewBox="0 0 ${W} ${H}"><rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="var(--surface-2)" rx="6"/><text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="var(--muted)" font-size="13">Waiting for Stockfish…</text></svg>`; return; }
+  if (!a) { el.innerHTML = `<svg viewBox="0 0 ${W} ${H}"><rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="var(--surface-2)" rx="6"/><text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="var(--muted)" font-size="13">Waiting for the engine…</text></svg>`; return; }
   const n = a.evals.length - 1;
   const x = (i) => m.l + (n ? i / n : 0) * (W - m.l - m.r);
   const y = (wp) => m.t + (1 - wp / 100) * (H - m.t - m.b);
@@ -785,6 +1040,8 @@ function maxPly() { try { return currentData().moves.length; } catch (e) { retur
 $('lookup').addEventListener('submit', (e) => { e.preventDefault(); const v = $('username').value.trim(); if (v) loadUser(v); });
 $('loadOlder').addEventListener('click', () => loadOlderMonth(true));
 $('gameFilter').addEventListener('change', renderGamesTable);
+$('loadAll').addEventListener('click', loadWholeHistory);
+$('viewTabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-view]'); if (b && !b.disabled) setView(b.dataset.view); });
 $('analyzeRecent').addEventListener('click', analyzeRecent);
 $('depth').addEventListener('change', () => { store.set('grd:depth', $('depth').value); renderAll(); if (S.current && !cachedAnalysis(S.current)) openReview(S.current); });
 $('tcTabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tc]'); if (b) { S.tc = b.dataset.tc; renderRecent(); } });
@@ -800,7 +1057,7 @@ $('navNext').addEventListener('click', () => go(Math.min(maxPly(), S.ply + 1)));
 $('navEnd').addEventListener('click', () => go(maxPly()));
 $('navFlip').addEventListener('click', () => { S.flip = !S.flip; renderReview(); });
 document.addEventListener('keydown', (e) => {
-  if (!S.current || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if (!S.current || S.view !== 'review' || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
   if (e.key === 'ArrowLeft') { go(Math.max(0, S.ply - 1)); e.preventDefault(); }
   else if (e.key === 'ArrowRight') { go(Math.min(maxPly(), S.ply + 1)); e.preventDefault(); }
   else if (e.key === 'Home') go(0);
@@ -808,7 +1065,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'f' || e.key === 'F') { S.flip = !S.flip; renderReview(); }
 });
 let resizeT;
-window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { renderHistory(); if (S.current) renderReview(); }, 150); });
+window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { renderHistory(); renderReview(); }, 150); });
 
 $('themeBtn').addEventListener('click', () => {
   const root = document.documentElement;

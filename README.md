@@ -11,11 +11,15 @@ Open `index.html` in Chrome, Edge or Firefox (double-click works), type your che
 Or serve the folder: `python3 -m http.server` and open http://localhost:8000.
 You can link straight to a user with `index.html?u=yourname`.
 
-Analysis results are cached in your browser, so a reviewed game opens instantly next time.
+Every move gets an explanation: the tactics it found (forks, pins, skewers, discovered attacks and checks, double checks, batteries, free pieces, removing the defender, back-rank and smothered mates), the ones it missed, the ones it allowed, and the engine's line. The spotter is `lib/tactics.js`.
+
+When served by `deploy/serve.py` (as on Mewtwo), every game the page loads and every review is saved on the server, so they're there next time on any device, even if chess.com is unreachable. Opened straight from disk, reviews are only cached in the browser.
 Depth 12 takes roughly 20–60 seconds per game; raise it for more accurate reviews.
 
 ## Files
 - `index.html`, `app.js`: the app
+- `lib/tactics.js`: tactic spotter used for the move explanations
+- `deploy/`: Mewtwo server, systemd unit and installer (see deploy/README.md)
 - `lib/chess.js`: move rules (chess.js 0.10.3, BSD)
 - `lib/stockfish-src.js`: Stockfish 10 compiled to JavaScript (stockfish.js 10.0.2, GPLv3), embedded so it works from disk
 
